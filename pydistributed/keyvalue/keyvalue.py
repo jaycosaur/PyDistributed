@@ -160,3 +160,7 @@ class KeyValueClient:
     def shutdown(self):
         self._publisher.shutdown()
         self._subscriber.shutdown()
+
+    @property
+    def client_id(self):
+        return self._client_id

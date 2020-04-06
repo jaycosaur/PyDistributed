@@ -69,8 +69,8 @@ def bus_test():
 
 
 def kv_client():
-    client = pydistributed.keyvalue.KeyValueClient()
-    client_id = client._client_id
+    client = pydistributed.KeyValueClient()
+    client_id = client.client_id
     count = 0
     print("Client", client_id, "ready...")
     time.sleep(1)
@@ -83,25 +83,9 @@ def kv_client():
     print("Client", client_id, "finishing...")
 
 
-try:
-    store = pydistributed.keyvalue.KeyValueStore()
-    time.sleep(2)  # allow time to bootup
-
-    threads = [multiprocessing.Process(target=kv_client) for _ in range(4)]
-
-    for thread in threads:
-        thread.start()
-
-    for thread in threads:
-        thread.join()
-
-finally:
-    store.shutdown()
-
-
 def kv_test():
     try:
-        store = pydistributed.keyvalue.KeyValueStore()
+        store = pydistributed.KeyValueStore()
         time.sleep(2)  # allow time to bootup
 
         threads = [multiprocessing.Process(target=kv_client) for _ in range(4)]
