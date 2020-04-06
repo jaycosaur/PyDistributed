@@ -5,6 +5,7 @@ import pickle
 import time
 import random
 import pydistributed
+import gzip
 
 
 def publish_thread(publisher):
@@ -14,13 +15,10 @@ def publish_thread(publisher):
             topic = str(random.randrange(1, 10))
             messagedata = "server#%s" % publisher_id
             print("%s %s" % (topic, messagedata))
-            # socket.send_string("%d %s" % (topic, messagedata))
             publisher.send(topic, messagedata)
             time.sleep(0.5)
 
-    thread = _threading.Thread(target=run)
-
-    return thread
+    return _threading.Thread(target=run)
 
 
 def subscriber_thread(subscriber):
@@ -35,12 +33,20 @@ def subscriber_thread(subscriber):
 
 
 def service_ping():
+    def callback(message, _topic, publisher):
+        print("SERVICE PING", message)
+        publisher.publish("pings", "ping")
+
     client = pydistributed.MessageBusClient()
-    client.subscribe("pongs")
+    client.start()
+    unregister = client.register_callback("pongs", callback,)
     time.sleep(0.5)
-    while True:
-        client.publish("pings", "ping")
-        print("GOT", client.receive())
+    client.publish("pings", "ping")
+
+    time.sleep(10)
+    unregister()
+    client.shutdown()
+    print("FINISHING")
 
 
 def service_pong():
@@ -48,7 +54,8 @@ def service_pong():
     client.subscribe("pings")
     time.sleep(0.5)
     while True:
-        print("GOT", client.receive())
+        print("SERVICE PONG", client.receive())
+        time.sleep(0.5)
         client.publish("pongs", "pong")
 
 
@@ -59,8 +66,10 @@ def bus_test():
 
         ping = multiprocessing.Process(target=service_ping)
         pong = multiprocessing.Process(target=service_pong)
+        file = multiprocessing.Process(target=to_file)
         pong.start()
         ping.start()
+        file.start()
         broker.join()
     except Exception as e:
         print(e, "bringing down broker")
@@ -101,5 +110,4 @@ def kv_test():
 
 
 if __name__ == "__main__":
-    # bus_test()
-    kv_test()
+    bus_test()
