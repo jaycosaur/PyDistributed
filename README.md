@@ -29,7 +29,7 @@ Ping Pong Example
 
 ```python
 def service_ping():
-    client = distributed.MessageBusClient()
+    client = pydistributed.MessageBusClient()
     client.subscribe("pongs")
     time.sleep(0.5)
     while True:
@@ -38,7 +38,7 @@ def service_ping():
 
 
 def service_pong():
-    client = distributed.MessageBusClient()
+    client = pydistributed.MessageBusClient()
     client.subscribe("pings")
     time.sleep(0.5)
     while True:
@@ -47,7 +47,7 @@ def service_pong():
 
 
 try:
-    broker = distributed.MessageBusBroker()
+    broker = pydistributed.MessageBusBroker()
     broker.start()
     ping = multiprocessing.Process(target=service_ping)
     pong = multiprocessing.Process(target=service_pong)
@@ -67,7 +67,7 @@ finally:
 ```python
 
 def kv_client():
-    client = distributed.keyvalue.KeyValueClient()
+    client = pydistributed.keyvalue.KeyValueClient()
     client_id = client._client_id
     count = 0
     time.sleep(1)
@@ -81,7 +81,7 @@ def kv_client():
     print("Client", client_id, "finishing...")
 
 try:
-    store = distributed.keyvalue.KeyValueStore()
+    store = pydistributed.keyvalue.KeyValueStore()
     time.sleep(2)  # allow time to bootup
 
     threads = [multiprocessing.Process(target=kv_client) for _ in range(4)]
