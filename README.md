@@ -13,10 +13,18 @@ Example use cases:
 - You have a network of Raspberry Pis but want to offload some GPU loads onto a Jetson Nano.
 - You want to build an overly complicated ping / pong example.
 
+## Features
+
+- **Message Bus** - A brokered Publisher / Subscriber messaging bus where clients can publish messages to topics and subscribe to receive messages from topics (N publishers -> N consumers).
+- **Task Queue** - A brokered Synchronous Task Queue where clients submit and wait for a response from a worker thread. Only one worker ever receives message, work is assigned in a round robin fashion.
+- **Key Value Store** - A lean key value database (backedup to disk) with communications backed by a message bus. Should not be used for high message throughput.
+
 ### TODO
 
 - [x] Message Bus
+- [x] Task Queue
 - [x] Key Value Store
+- [ ] RPC
 - [ ] Authentication via ZAP https://github.com/zeromq/pyzmq/blob/master/examples/security/ironhouse.py
 - [ ] Auto-discovery working with zeroconf networking
 - [ ] Coverage Testing
