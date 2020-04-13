@@ -18,13 +18,15 @@ Example use cases:
 - **Message Bus** - A brokered Publisher / Subscriber messaging bus where clients can publish messages to topics and subscribe to receive messages from topics (N publishers -> N consumers).
 - **Task Queue** - A brokered Synchronous Task Queue where clients submit and wait for a response from a worker thread. Only one worker ever receives message, work is assigned in a round robin fashion.
 - **Key Value Store** - A lean key value database (backed up to disk) with communications backed by the message bus. Should not be used for high message throughput.
-- **Event Source** - A disk backed event storage and event replay service
+- **Event Source** - A disk backed event storage and event replay service, based on kafkas low level implementation with idempotent log and index files.
 
 ### TODO
 
 - [x] Message Bus
 - [x] Task Queue
 - [x] Key Value Store
+- [x] Low Level Event Source
+- [x] Event Source Connectors
 - [ ] RPC
 - [ ] Authentication via ZAP https://github.com/zeromq/pyzmq/blob/master/examples/security/ironhouse.py
 - [ ] Auto-discovery working with zeroconf networking

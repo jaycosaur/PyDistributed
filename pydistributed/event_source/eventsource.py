@@ -1,6 +1,7 @@
 import typing
 import os
 import logging
+from dataclasses import dataclass
 
 from .log_file import (
     LogFile,
@@ -10,6 +11,18 @@ from .log_file import (
 )
 
 from .exceptions import CouldNotFindOffset, LogSizeExceeded
+
+
+@dataclass
+class Event:
+    offset: int
+    timestamp: float
+    message_size: int
+    data: bytes
+
+    @staticmethod
+    def from_tuple(data: typing.Tuple[int, float, int, bytes]):
+        return Event(*data)
 
 
 class EventSource:
@@ -128,10 +141,8 @@ class EventSource:
             results.extend(log_result)
         return results
 
-    def get(self, offset: int) -> typing.Tuple[int, float, int, bytes]:
-        return self._get(offset, 1)[0]
+    def get(self, offset: int) -> Event:
+        return Event.from_tuple(self._get(offset, 1)[0])
 
-    def get_batch(
-        self, offset: int, number_batch: int
-    ) -> typing.List[typing.Tuple[int, float, int, bytes]]:
-        return self._get(offset, number_batch)
+    def get_batch(self, offset: int, number_batch: int) -> typing.List[Event]:
+        return [Event.from_tuple(data) for data in self._get(offset, number_batch)]
