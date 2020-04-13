@@ -2,22 +2,29 @@ import struct
 import typing
 import os
 import time
+import logging
 
 INDEX_ENTRY_SIZE = 8
 INDEX_FILE_SUFFIX = ".index"
 LOG_FILE_SUFFIX = ".log"
 
 
-class IndexFile:
-    """[summary]
-    """
+class OffsetMissingInIndex(Exception):
+    pass
 
+
+class CouldNotFindOffset(Exception):
+    pass
+
+
+class IndexFile:
     formatter = struct.Struct(
         "II"
     )  # entries are 8 bytes in total [file_offset, physical_position]
 
-    def __init__(self, file_name: str):
+    def __init__(self, file_name: str, logger=logging.getLogger("index_file")):
         self._file_name = file_name
+        self.logger = logger
 
     def write(self, relative_offset: int, physical_position: int) -> int:
         packed = self.formatter.pack(relative_offset, physical_position)
@@ -50,13 +57,11 @@ class IndexFile:
             floor_buf = f.read(INDEX_ENTRY_SIZE)
             floor_off, floor_pos = self.formatter.unpack(floor_buf)
             if floor_off > relative_offset:
-                raise Exception("Can't find that here!")
+                raise OffsetMissingInIndex()
             ceil_offset = f.seek(-INDEX_ENTRY_SIZE, 2)
             ceil_index = ceil_offset // INDEX_ENTRY_SIZE
             ceil_buf = f.read(INDEX_ENTRY_SIZE)
-            ceil_off, ceil_pos = self.formatter.unpack(ceil_buf)
-            if ceil_off < relative_offset:
-                raise Exception("Can't find that here!")
+            _ceil_off, _ceil_pos = self.formatter.unpack(ceil_buf)
 
             # start binary search
             iters = 0
@@ -67,20 +72,20 @@ class IndexFile:
                 current_buf = f.read(INDEX_ENTRY_SIZE)
                 current_off, current_pos = self.formatter.unpack(current_buf)
                 if current_off == relative_offset:
-                    print("Search iterations: ", iters)
+                    self.logger.info("Search iterations: %d", iters)
                     return (current_off, current_pos)
                 if current_off > relative_offset and current_index == floor_index + 1:
                     # must be between the current and the floor
-                    print("Search iterations: ", iters)
+                    self.logger.info("Search iterations: %d", iters)
                     return (floor_off, floor_pos)
                 if current_off > relative_offset:
                     # adjust upper bound and retry
                     ceil_index = current_index
-                    ceil_off, ceil_pos = current_off, current_pos
+                    _ceil_off, _ceil_pos = current_off, current_pos
                     continue
                 elif current_off < relative_offset and current_index == ceil_index - 1:
                     # must be between the current and the ceil
-                    print("Search iterations: ", iters)
+                    self.logger.info("Search iterations: %d", iters)
                     return (current_off, current_pos)
                 elif current_off < relative_offset:
                     # adjust lower bound and retry
@@ -88,7 +93,7 @@ class IndexFile:
                     floor_off, floor_pos = current_off, current_pos
                     continue
                 else:
-                    raise Exception("Could not find!")
+                    raise OffsetMissingInIndex()
 
 
 MAX_LOG_SIZE_DEFAULT = 1 << 32  # ~ 4GB
@@ -116,6 +121,7 @@ class LogFile:
         absolute_offset: int,
         max_log_size: int = MAX_LOG_SIZE_DEFAULT,
         index_interval: int = DEFAULT_INDEX_INTERVAL,
+        logger=logging.getLogger("log_file"),
     ):
         self.__max_log_size = max_log_size
         self.__index_interval = index_interval
@@ -128,6 +134,7 @@ class LogFile:
         )
         self.__index_file = IndexFile(self.__index_file_name)
         self.__last_index_size: typing.Optional[int] = None
+        self.logger = logger
 
     def _write(self, offset: int, data: bytes):
         with open(self.__log_file_name, "ab+") as f:
@@ -154,38 +161,74 @@ class LogFile:
         return self._write(offset, meta_buf + payload)
 
     def _scan_for_message(
-        self, start_position: int, offset: int
-    ) -> typing.Tuple[int, float, int, bytes]:
-        # progresses through file linearly
-        scan_iterations = 0
+        self, start_position: int, offset: int, offset_last: int
+    ) -> typing.List[typing.Tuple[int, float, int, bytes]]:
+        scan_iterations = 0  # for performance tests
+        results_to_return: typing.List[typing.Tuple[int, float, int, bytes]] = []
         with open(self.__log_file_name, "rb+") as f:
             f.seek(start_position, 0)
             while True:
                 raw_meta = f.read(META_DATA_SIZE)
+                if len(raw_meta) == 0:
+                    # EOF
+                    break
                 message_offset, timestamp, payload_size = self.meta_formatter.unpack(
                     raw_meta
                 )
-                if message_offset == offset:
+                if message_offset == offset_last:
                     payload = f.read(payload_size)
-                    print("Number of scan iterations:", scan_iterations)
-                    return (message_offset, timestamp, payload_size, payload)
-                f.seek(payload_size, 1)
+                    results_to_return.append(
+                        (message_offset, timestamp, payload_size, payload)
+                    )
+                    break
+                if message_offset >= offset:
+                    payload = f.read(payload_size)
+                    results_to_return.append(
+                        (message_offset, timestamp, payload_size, payload)
+                    )
+                else:
+                    f.seek(payload_size, 1)
                 scan_iterations += 1
+        self.logger.info("Number of scan iterations: %s", scan_iterations)
+        return results_to_return
 
     def _read(self, offset: int):
         pass
 
-    def get(self, offset: int, number_batch=1):
-        _index_file_offset, physical_position = self.__index_file.search(
+    def get(
+        self, offset: int, offset_end: typing.Optional[int] = None
+    ) -> typing.List[typing.Tuple[int, float, int, bytes]]:
+        # if offset_end is -1 it means to load until the end of the file
+        index_start_file_offset, physical_start_position = self.__index_file.search(
             offset - self.__log_initial_offset
         )
-        print(
-            "Closest match in index file:",
-            self.__log_initial_offset + _index_file_offset,
-            "@ position",
-            physical_position,
+
+        if offset_end is None:
+            offset_end = offset
+            index_end_file_offset, physical_end_position = (
+                index_start_file_offset,
+                physical_start_position,
+            )
+        elif offset_end == -1:
+            index_end_file_offset, physical_end_position = -1, -1
+        elif offset_end == offset:
+            index_end_file_offset, physical_end_position = (
+                index_start_file_offset,
+                physical_start_position,
+            )
+        else:
+            index_end_file_offset, physical_end_position = self.__index_file.search(
+                offset_end - self.__log_initial_offset
+            )
+
+        self.logger.info(
+            "Closest match in index file: %d @ position %d to %d @ position %d",
+            self.__log_initial_offset + index_start_file_offset,
+            physical_start_position,
+            self.__log_initial_offset + index_end_file_offset,
+            physical_end_position,
         )
-        return self._scan_for_message(physical_position, offset)
+        return self._scan_for_message(physical_start_position, offset, offset_end)
 
     def get_last_offset(self) -> int:
         (
@@ -198,7 +241,7 @@ class LogFile:
             while True:
                 raw_meta = f.read(META_DATA_SIZE)
                 if len(raw_meta) == 0:
-                    print(f"Get last took {scan_iterations} iterations")
+                    self.logger.info("Get last took %s iterations", scan_iterations)
                     f.seek(last_offset, 0)
                     raw_meta = f.read(META_DATA_SIZE)
                     (
@@ -225,6 +268,7 @@ class EventSource:
         self.log_store_path = log_store_path
         self.__last_offset: typing.Optional[int] = None
         self._log_files: typing.List[int] = []
+        self.logger = logging.getLogger("event_source")
 
         init_data = self._initialise_logs(log_store_path)
 
@@ -266,31 +310,33 @@ class EventSource:
         log_files.sort()
         return log_files
 
-    def _scan_log_files(self, offset: int) -> typing.Optional[int]:
+    def _scan_log_files(self, offset: int, end_offset: int) -> typing.List[int]:
         log_files = self._log_files
         if len(log_files) == 0:
             log_files = self._get_log_initial_indexes()
             self._log_files = log_files
-        log_index: typing.Optional[int] = None
-        for file_index in log_files:
-            if log_index is not None and file_index > offset:
-                return log_index
-            log_index = file_index
-        return log_index
+        log_indexes: typing.List[int] = []
+        for idx, file_index in enumerate(log_files):
+            if file_index >= offset:
+                if file_index != offset:
+                    log_indexes.append(log_files[idx - 1])
+                if file_index <= end_offset and idx == len(log_files) - 1:
+                    log_indexes.append(file_index)
+            if file_index > end_offset:
+                break
+
+        return log_indexes
 
     def write(self, payload: bytes):
         next_offset = 0 if self.__last_offset is None else self.__last_offset + 1
         while True:
             try:
-                self.__current_log_file.write(
-                    next_offset, payload
-                )  # off by one error here somewhere
+                self.__current_log_file.write(next_offset, payload)
                 self.__last_offset = next_offset
                 break
             except LogSizeExceeded:
-                print("Log file size exceeded for offset", next_offset)
+                self.logger.info("Log file size exceeded for offset %s", next_offset)
                 self._log_files.append(next_offset)
-                # move onto next log file
                 self.__current_log_file = LogFile(
                     self.log_store_path,
                     next_offset,
@@ -298,43 +344,38 @@ class EventSource:
                     index_interval=self.index_interval,
                 )
 
-    def get(self, offset: int, number_batch=1):
-        log_offset = self._scan_log_files(offset)
-        if log_offset is None:
-            raise Exception("Could not find sir.")
-        log_file = LogFile(
-            self.log_store_path, log_offset
-        )  # this should be cached somewhere
-        return log_file.get(offset)
+    def _get(
+        self, offset: int, number_of_results: int
+    ) -> typing.List[typing.Tuple[int, float, int, bytes]]:
+        final_offset = offset - 1 + number_of_results
+        log_file_indexes = self._scan_log_files(offset, final_offset)
+        self.logger.info("_get results in a log span of %s", len(log_file_indexes))
+        if len(log_file_indexes) == 0:
+            raise CouldNotFindOffset()
 
+        if len(log_file_indexes) == 1:
+            log_file = LogFile(self.log_store_path, log_file_indexes[0])
+            return log_file.get(offset, final_offset)
 
-import shutil
+        results: typing.List[typing.Tuple[int, float, int, bytes]] = []
+        for idx, log_file_index in enumerate(log_file_indexes):
+            if log_file_index > offset:
+                start_offset = log_file_index
+            else:
+                start_offset = offset
+            if idx < len(log_file_indexes) - 1:  # if not last file
+                end_offset = -1  # to end of index file
+            else:
+                end_offset = final_offset
+            log_file = LogFile(self.log_store_path, log_file_index)
+            log_result = log_file.get(start_offset, end_offset)
+            results.extend(log_result)
+        return results
 
+    def get(self, offset: int) -> typing.Tuple[int, float, int, bytes]:
+        return self._get(offset, 1)[0]
 
-def cleanup(folder_path):
-    for file_object in os.listdir(folder_path):
-        file_object_path = os.path.join(folder_path, file_object)
-        if os.path.isfile(file_object_path) or os.path.islink(file_object_path):
-            os.unlink(file_object_path)
-        else:
-            shutil.rmtree(file_object_path)
-
-
-cleanup("logs")
-
-
-event_source = EventSource(max_log_size=1 << 20)
-
-
-def data_gen(index: int) -> bytes:
-    base_str = f"this is a payload for message {index}"
-    rep = base_str * (index % 50)
-    return rep.encode("utf8")
-
-
-# range of positions from 2048 -> 2048000
-for i in range(100000):
-    event_source.write(data_gen(i))
-
-
-print(event_source.get(0, 100), event_source.get(20382))
+    def get_batch(
+        self, offset: int, number_batch: int
+    ) -> typing.List[typing.Tuple[int, float, int, bytes]]:
+        return self._get(offset, number_batch)
