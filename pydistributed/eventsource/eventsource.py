@@ -153,7 +153,9 @@ class LogFile:
         meta_buf = self.meta_formatter.pack(offset, time.time_ns(), len(payload))
         return self._write(offset, meta_buf + payload)
 
-    def _scan_for_message(self, start_position: int, offset: int):
+    def _scan_for_message(
+        self, start_position: int, offset: int
+    ) -> typing.Tuple[int, float, int, bytes]:
         # progresses through file linearly
         scan_iterations = 0
         with open(self.__log_file_name, "rb+") as f:
@@ -173,7 +175,7 @@ class LogFile:
     def _read(self, offset: int):
         pass
 
-    def get(self, offset: int):  # should also take a number of messages!
+    def get(self, offset: int, number_batch=1):
         _index_file_offset, physical_position = self.__index_file.search(
             offset - self.__log_initial_offset
         )
@@ -221,6 +223,8 @@ class EventSource:
         self.max_log_size = max_log_size
         self.index_interval = index_interval
         self.log_store_path = log_store_path
+        self.__last_offset: typing.Optional[int] = None
+        self._log_files: typing.List[int] = []
 
         init_data = self._initialise_logs(log_store_path)
 
@@ -232,6 +236,7 @@ class EventSource:
                 max_log_size=self.max_log_size,
                 index_interval=self.index_interval,
             )
+            self._log_files.append(0)
 
     def _initialise_logs(
         self, log_store_path: str
@@ -241,15 +246,18 @@ class EventSource:
         if len(files) == 0:
             return None
 
-        self.__current_log_file = LogFile(
+        log_file = LogFile(
             self.log_store_path,
             files[-1],
             max_log_size=self.max_log_size,
             index_interval=self.index_interval,
         )
-        self.__last_offset = self.__current_log_file.get_last_offset()
+        last_offset = log_file.get_last_offset()
 
-        return files[-1], self.__last_offset
+        self.__current_log_file = log_file
+        self.__last_offset = last_offset
+
+        return files[-1], last_offset
 
     def _get_log_initial_indexes(self) -> typing.List[int]:
         files = os.listdir(self.log_store_path)
@@ -259,9 +267,11 @@ class EventSource:
         return log_files
 
     def _scan_log_files(self, offset: int) -> typing.Optional[int]:
-        log_files = self._get_log_initial_indexes()
-        print(f"Found {len(log_files)} log files")
-        log_index = None
+        log_files = self._log_files
+        if len(log_files) == 0:
+            log_files = self._get_log_initial_indexes()
+            self._log_files = log_files
+        log_index: typing.Optional[int] = None
         for file_index in log_files:
             if log_index is not None and file_index > offset:
                 return log_index
@@ -279,6 +289,7 @@ class EventSource:
                 break
             except LogSizeExceeded:
                 print("Log file size exceeded for offset", next_offset)
+                self._log_files.append(next_offset)
                 # move onto next log file
                 self.__current_log_file = LogFile(
                     self.log_store_path,
@@ -287,7 +298,7 @@ class EventSource:
                     index_interval=self.index_interval,
                 )
 
-    def get(self, offset: int):
+    def get(self, offset: int, number_batch=1):
         log_offset = self._scan_log_files(offset)
         if log_offset is None:
             raise Exception("Could not find sir.")
@@ -312,18 +323,18 @@ def cleanup(folder_path):
 cleanup("logs")
 
 
-# event_source = EventSource(max_log_size=1<<20)
+event_source = EventSource(max_log_size=1 << 20)
 
 
-# def data_gen(index: int) -> bytes:
-#     base_str = f"this is a payload for message {index}"
-#     rep = base_str * (index % 50)
-#     return rep.encode("utf8")
-
-# # range of positions from 2048 -> 2048000
-# for i in range(100000):
-#    event_source.write(data_gen(i))
+def data_gen(index: int) -> bytes:
+    base_str = f"this is a payload for message {index}"
+    rep = base_str * (index % 50)
+    return rep.encode("utf8")
 
 
-print(event_source.get(0), event_source.get(20382))
+# range of positions from 2048 -> 2048000
+for i in range(100000):
+    event_source.write(data_gen(i))
 
+
+print(event_source.get(0, 100), event_source.get(20382))
