@@ -26,7 +26,7 @@ Example use cases:
 - [x] Task Queue
 - [x] Key Value Store
 - [x] Low Level Event Source
-- [x] Event Source Connectors
+- [ ] Event Source Connectors
 - [ ] RPC
 - [ ] Authentication via ZAP https://github.com/zeromq/pyzmq/blob/master/examples/security/ironhouse.py
 - [ ] Auto-discovery working with zeroconf networking
