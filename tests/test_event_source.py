@@ -1,7 +1,7 @@
 import unittest
 import os
 import shutil
-from eventsource import EventSource
+from pydistributed import EventSource
 import logging
 
 # logging.basicConfig(level="DEBUG")
@@ -29,12 +29,15 @@ LOG_PATH = "logs"
 
 class EventSourceTest(unittest.TestCase):
     def setUp(self):
+        if not os.path.isdir(LOG_PATH):
+            os.mkdir(LOG_PATH)
         self.event_source = EventSource(log_store_path=LOG_PATH, max_log_size=1 << 20)
         for i in range(5000):
             self.event_source.write(encode_data(i))
 
     def tearDown(self):
         cleanup(LOG_PATH)
+        os.rmdir(LOG_PATH)
 
     def test_get_any_item(self):
         idx = 1023

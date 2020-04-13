@@ -5,3 +5,5 @@ from .bus import MessageBusBroker, MessageBusClient
 from .keyvalue import KeyValueStore, KeyValueClient
 
 from .task_queue import QueueBroker, QueueClient, QueueWorker
+
+from .event_source import EventSource
